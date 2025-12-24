@@ -4,7 +4,7 @@ from time import time
 
 from httpx import Response
 
-from app.core import logger
+from app.core import logger, settings
 from app.utils import RequestUtils, Multiton
 from app.modules.alist.v3.path import AlistPath
 from app.modules.alist.v3.storage import AlistStorage
@@ -178,11 +178,14 @@ class AlistClient(metaclass=Multiton):
         except Exception:
             raise RuntimeError("获取用户信息失败")
 
-    async def async_api_fs_list(self, dir_path: str) -> list[AlistPath]:
+    async def async_api_fs_list(
+        self, dir_path: str, max_retries: int = 3
+    ) -> list[AlistPath]:
         """
         获取文件列表
 
         :param dir_path: 目录路径
+        :param max_retries: 遇到速率限制时的最大重试次数
         :return: AlistPath 对象列表
         """
 
@@ -196,15 +199,30 @@ class AlistClient(metaclass=Multiton):
             "refresh": False,
         }
 
-        resp = await self.__post(self.url + "/api/fs/list", json=json)
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"获取目录 {dir_path} 的文件列表请求发送失败，状态码：{resp.status_code}"
-            )
+        for attempt in range(max_retries + 1):
+            resp = await self.__post(self.url + "/api/fs/list", json=json)
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"获取目录 {dir_path} 的文件列表请求发送失败，状态码：{resp.status_code}"
+                )
 
-        result = resp.json()
+            result = resp.json()
 
-        if result["code"] != 200:
+            if result["code"] == 200:
+                break
+
+            # 检查是否是速率限制错误
+            message = result.get("message", "")
+            if "TooManyRequests" in message or "请求过快" in message:
+                wait_seconds = settings.RateLimitRetryWait
+
+                if attempt < max_retries:
+                    logger.warning(
+                        f"请求过快，等待 {wait_seconds:.2f} 秒后重试 ({attempt + 1}/{max_retries})"
+                    )
+                    await sleep(wait_seconds)
+                    continue
+
             raise RuntimeError(
                 f"获取目录 {dir_path} 的文件列表失败，错误信息：{result['message']}"
             )
@@ -383,9 +401,9 @@ class AlistClient(metaclass=Multiton):
                     filter=filter,
                 ):
                     yield child_path
-
-            if filter(path):
+            elif filter(path):
                 if is_detail:
+                    await sleep(wait_time)  # 获取详情前也等待
                     yield await self.async_api_fs_get(path.full_path)
                 else:
                     yield path

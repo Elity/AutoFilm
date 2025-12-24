@@ -101,5 +101,14 @@ class SettingManager:
             library_poster_list = safe_load(file).get("LibraryPosterList", [])
         return library_poster_list
 
+    @property
+    def RateLimitRetryWait(self) -> float:
+        """
+        速率限制重试等待时间（毫秒），默认 500ms
+        """
+        with self.CONFIG.open(mode="r", encoding="utf-8") as file:
+            wait_ms = safe_load(file).get("Settings", {}).get("rate_limit_retry_wait", 500)
+        return float(wait_ms) / 1000.0  # 转换为秒
+
 
 settings = SettingManager()
