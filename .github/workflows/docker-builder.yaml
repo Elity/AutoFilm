@@ -62,7 +62,6 @@ jobs:
           file: ./Dockerfile
           platforms: |
             linux/amd64
-            linux/arm64/v8
           push: true
           build-args: |
             AUTOFILM_VERSION=${{ env.APP_VERSION }}
